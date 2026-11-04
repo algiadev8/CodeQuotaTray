@@ -1,0 +1,22 @@
+name: Build Windows MSI
+on:
+  workflow_dispatch:
+  push:
+    branches: [windows]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build Windows MSI
+        shell: pwsh
+        run: ./Windows/build-msi.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodeQuotaTray-Windows
+          path: Windows/dist/*.msi

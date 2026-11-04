@@ -1,0 +1,34 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="CodeQuota Tray"
+           Manufacturer="CodeQuota Tray"
+           Version="$(var.Version)"
+           UpgradeCode="6F3B1C52-8A4D-4E7B-9C21-5D0E7A9B3F14"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="新しいバージョンの CodeQuota Tray が既にインストールされています。" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="CodeQuota Tray" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="CodeQuota Tray">
+      <ComponentGroupRef Id="AppComponents" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AppComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="*">
+        <File Id="CodeQuotaTrayExe" Source="$(var.SourceDir)\CodeQuotaTray.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut"
+                    Directory="ProgramMenuFolder"
+                    Name="CodeQuota Tray"
+                    WorkingDirectory="INSTALLFOLDER"
+                    Advertise="yes" />
+        </File>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>
