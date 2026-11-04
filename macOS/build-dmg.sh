@@ -12,9 +12,6 @@ trap 'rm -rf "$STAGE"' EXIT
 
 ./build-app.sh
 
-# 配布用に ad-hoc 署名（Apple Silicon では未署名バイナリが起動できないため）
-codesign --force --deep --sign - "$APP"
-
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 

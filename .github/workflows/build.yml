@@ -16,7 +16,10 @@ jobs:
 
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/v')
-        run: /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${GITHUB_REF_NAME#v}" macOS/Info.plist
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" macOS/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" macOS/Info.plist
 
       - name: Build .dmg
         run: ./macOS/build-dmg.sh
@@ -26,8 +29,27 @@ jobs:
           name: CodeQuotaTray-macOS
           path: macOS/dist/*.dmg
 
+      # Sparkle の自動アップデート用フィード（EdDSA 署名つき）。
+      # アプリは releases/latest/download/appcast.xml を参照する。
+      - name: Generate appcast
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          KEY="$RUNNER_TEMP/sparkle_ed.key"
+          ARCHIVES="$RUNNER_TEMP/archives"
+          mkdir -p "$ARCHIVES"
+          cp macOS/dist/*.dmg "$ARCHIVES/"
+          (umask 077; printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY")
+          macOS/.build/artifacts/sparkle/Sparkle/bin/generate_appcast \
+            --ed-key-file "$KEY" \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+            "$ARCHIVES"
+          rm -f "$KEY"
+          cp "$ARCHIVES/appcast.xml" macOS/dist/appcast.xml
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" macOS/dist/*.dmg --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" macOS/dist/*.dmg macOS/dist/appcast.xml --title "$GITHUB_REF_NAME" --generate-notes

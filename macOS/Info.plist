@@ -7,7 +7,13 @@
 <key>CFBundleExecutable</key><string>CodeQuotaMac</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>1.0.0</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleVersion</key><string>1.0.0</string>
+<key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
+<key>SUFeedURL</key><string>https://github.com/algiadev8/CodeQuotaTray/releases/latest/download/appcast.xml</string>
+<key>SUPublicEDKey</key><string>VVqG9wJkQ9Huli4A2TCkK7OqIgc7chIn710NjKYWMWQ=</string>
+<key>SUEnableAutomaticChecks</key><true/>
+<key>SUAutomaticallyUpdate</key><true/>
+<key>SUScheduledCheckInterval</key><integer>86400</integer>
 </dict></plist>

@@ -26,10 +26,88 @@ protocol SettingsHost: AnyObject {
     func settingsLogin(_ provider: any QuotaProvider)
     func settingsLogout(_ provider: any QuotaProvider)
     func settingsVisibilityChanged()
+    var appVersion: String { get }
+    var autoUpdate: Bool { get set }
+    func settingsCheckForUpdates()
+}
+
+/// 角丸の枠つきカード。内容の NSStackView を余白つきで固定する。
+@MainActor
+class CardView: NSView {
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.cornerRadius = 8
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    }
+
+    func install(_ stack: NSStackView, fillingWidth fill: [NSView] = []) {
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        fill.forEach { $0.translatesAutoresizingMaskIntoConstraints = false }
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14)
+        ] + fill.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) })
+    }
 }
 
 @MainActor
-final class ProviderRowView: NSView {
+final class UpdateRowView: CardView {
+    private weak var host: SettingsHost?
+    private let versionLabel = NSTextField(labelWithString: "")
+    private let autoCheck = NSButton(checkboxWithTitle: "自動でアップデートする", target: nil, action: nil)
+    private let checkButton = NSButton(title: "今すぐ確認", target: nil, action: nil)
+
+    init(host: SettingsHost) {
+        self.host = host
+        super.init()
+        let name = NSTextField(labelWithString: "アップデート")
+        name.font = .boldSystemFont(ofSize: 14)
+        versionLabel.font = .systemFont(ofSize: 12)
+        versionLabel.textColor = .secondaryLabelColor
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        let header = NSStackView(views: [name, spacer, checkButton])
+        header.orientation = .horizontal
+        let stack = NSStackView(views: [header, versionLabel, autoCheck])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        install(stack, fillingWidth: [header])
+        checkButton.target = self
+        checkButton.action = #selector(checkClicked)
+        autoCheck.target = self
+        autoCheck.action = #selector(autoClicked)
+        reload()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    @objc private func checkClicked() { host?.settingsCheckForUpdates() }
+    @objc private func autoClicked() { host?.autoUpdate = autoCheck.state == .on }
+
+    func reload() {
+        guard let host else { return }
+        versionLabel.stringValue = "現在のバージョン \(host.appVersion)"
+        autoCheck.state = host.autoUpdate ? .on : .off
+    }
+}
+
+@MainActor
+final class ProviderRowView: CardView {
     private let provider: any QuotaProvider
     private weak var host: SettingsHost?
     private let statusLabel = NSTextField(labelWithString: "")
@@ -41,9 +119,7 @@ final class ProviderRowView: NSView {
     init(provider: any QuotaProvider, host: SettingsHost) {
         self.provider = provider
         self.host = host
-        super.init(frame: .zero)
-        wantsLayer = true
-        translatesAutoresizingMaskIntoConstraints = false
+        super.init()
 
         let name = NSTextField(labelWithString: provider.displayName)
         name.font = .boldSystemFont(ofSize: 14)
@@ -64,16 +140,7 @@ final class ProviderRowView: NSView {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 6
-        header.translatesAutoresizingMaskIntoConstraints = false
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            header.widthAnchor.constraint(equalTo: stack.widthAnchor)
-        ])
+        install(stack, fillingWidth: [header])
 
         loginButton.target = self
         loginButton.action = #selector(loginClicked)
@@ -85,15 +152,6 @@ final class ProviderRowView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    override var wantsUpdateLayer: Bool { true }
-
-    override func updateLayer() {
-        layer?.cornerRadius = 8
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-    }
 
     @objc private func loginClicked() { host?.settingsLogin(provider) }
     @objc private func logoutClicked() { host?.settingsLogout(provider) }
@@ -144,10 +202,12 @@ final class ProviderRowView: NSView {
 @MainActor
 final class SettingsWindowController: NSWindowController {
     private let rows: [ProviderRowView]
+    private let updateRow: UpdateRowView
     private static let width: CGFloat = 520
 
     init(host: SettingsHost) {
         rows = host.providers.map { ProviderRowView(provider: $0, host: host) }
+        updateRow = UpdateRowView(host: host)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 300),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "CodeQuota Tray 設定"
@@ -156,7 +216,7 @@ final class SettingsWindowController: NSWindowController {
 
         let heading = NSTextField(labelWithString: "プロバイダ")
         heading.font = .boldSystemFont(ofSize: 15)
-        let stack = NSStackView(views: [heading] + rows)
+        let stack = NSStackView(views: [heading] + rows + [updateRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -172,7 +232,7 @@ final class SettingsWindowController: NSWindowController {
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -inset),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset)
-        ] + rows.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) })
+        ] + (rows + [updateRow]).map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) })
         window.contentView = container
         resizeToFit()
         window.center()
@@ -191,6 +251,7 @@ final class SettingsWindowController: NSWindowController {
 
     func reload() {
         rows.forEach { $0.reload() }
+        updateRow.reload()
         resizeToFit()
     }
 

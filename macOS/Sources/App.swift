@@ -1,8 +1,9 @@
 import AppKit
 import Foundation
+import Sparkle
 
 @MainActor
-final class TrayApp: NSObject, NSApplicationDelegate, SettingsHost {
+final class TrayApp: NSObject, NSApplicationDelegate, SettingsHost, SPUUpdaterDelegate {
     private var statusItem: NSStatusItem!
     private var timer: Timer?
     private var fetching = false
@@ -11,12 +12,16 @@ final class TrayApp: NSObject, NSApplicationDelegate, SettingsHost {
     private var panels: [String: QuotaMenuView] = [:]
     private var loggingIn = Set<String>()
     private var settings: SettingsWindowController?
+    private var updaterController: SPUStandardUpdaterController!
+    private var pendingInstall: (() -> Void)?
 
     private let menu = NSMenu()
     private let refreshed = NSMenuItem(title: "未更新", action: nil, keyEquivalent: "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // No Dock icon; menu-bar only.
+        // 自動アップデート（Sparkle）。ダウンロードと検証はバックグラウンドで行う。
+        updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.imagePosition = .imageOnly
         for provider in providers { results[provider.id] = .failure("未取得") }
@@ -98,6 +103,39 @@ final class TrayApp: NSObject, NSApplicationDelegate, SettingsHost {
 
     func settingsVisibilityChanged() { updateStatusImage() }
 
+    var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+    }
+
+    var autoUpdate: Bool {
+        get { updaterController.updater.automaticallyDownloadsUpdates }
+        set {
+            updaterController.updater.automaticallyChecksForUpdates = newValue
+            updaterController.updater.automaticallyDownloadsUpdates = newValue
+        }
+    }
+
+    func settingsCheckForUpdates() { updaterController.checkForUpdates(nil) }
+
+    // MARK: 自動アップデート
+    // ダウンロード済みの更新を、ユーザーに確認せず即時に適用して自動で再起動する。
+    // ログイン操作の途中だけは、終わるまで待つ。
+
+    nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
+                             immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
+        Task { @MainActor in
+            self.pendingInstall = immediateInstallHandler
+            self.installPendingUpdateIfIdle()
+        }
+        return true
+    }
+
+    private func installPendingUpdateIfIdle() {
+        guard loggingIn.isEmpty, let install = pendingInstall else { return }
+        pendingInstall = nil
+        install()
+    }
+
     // アプリ内蔵のOAuth（PKCE）。既定ブラウザで認可し、localhostで認可コードを受け取る。
     private func login(_ provider: any QuotaProvider) async {
         guard loggingIn.insert(provider.id).inserted else { return }
@@ -105,6 +143,7 @@ final class TrayApp: NSObject, NSApplicationDelegate, SettingsHost {
         defer {
             loggingIn.remove(provider.id)
             settings?.reload()
+            installPendingUpdateIfIdle()
         }
         do {
             try await provider.login { url in NSWorkspace.shared.open(url) }
