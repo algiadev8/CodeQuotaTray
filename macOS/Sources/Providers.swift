@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 // 使用量プロバイダの拡張ポイント。
@@ -9,9 +10,7 @@ protocol QuotaProvider: Sendable {
     /// 永続キー（設定の保存に使用）。変更しないこと。
     var id: String { get }
     var displayName: String { get }
-    /// メニューバーのバー横に出す短いラベル（2文字程度）
-    var shortName: String { get }
-    /// メニューバーに描く枠の id（最大2本。上から順）
+    /// メニューバーに描く枠の id（最大2本。左から順）
     var barWindowIDs: [String] { get }
     var supportsLogin: Bool { get }
     /// アプリ自身のログイン情報（トークン）が保存されているか
@@ -32,7 +31,6 @@ extension QuotaProvider {
 struct CodexProvider: QuotaProvider {
     let id = "codex"
     let displayName = "Codex"
-    let shortName = "Cx"
     var supportsLogin: Bool { true }
     var hasStoredLogin: Bool { CredentialStore.exists(.codex) }
     func fetch() async -> QuotaResult { await UsageClient.fetch(.codex) }
@@ -45,7 +43,6 @@ struct CodexProvider: QuotaProvider {
 struct ClaudeProvider: QuotaProvider {
     let id = "claude"
     let displayName = "Claude"
-    let shortName = "Cl"
     var supportsLogin: Bool { true }
     var hasStoredLogin: Bool { CredentialStore.exists(.claude) }
     func fetch() async -> QuotaResult { await UsageClient.fetch(.claude) }
@@ -63,6 +60,37 @@ enum ProviderRegistry {
 /// ユーザー設定（UserDefaults）
 enum Preferences {
     private static func key(_ id: String) -> String { "menubar.hidden.\(id)" }
+
+    private static func colorKey(_ id: String) -> String { "menubar.color.\(id)" }
+
+    /// 安定した ID から既定色を決める（Swift のランダム化された hashValue は使わない）。
+    private static func defaultMenuBarColor(for id: String) -> NSColor {
+        switch id {
+        case "codex": return NSColor(srgbRed: 0.06, green: 0.65, blue: 0.48, alpha: 1)
+        case "claude": return NSColor(srgbRed: 0.83, green: 0.43, blue: 0.29, alpha: 1)
+        default:
+            let hash = id.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+            return NSColor(calibratedHue: CGFloat(hash % 360) / 360, saturation: 0.65, brightness: 0.8, alpha: 1)
+                .usingColorSpace(.sRGB) ?? NSColor(srgbRed: 0.3, green: 0.5, blue: 0.8, alpha: 1)
+        }
+    }
+
+    static func menuBarColor(for provider: any QuotaProvider) -> NSColor {
+        guard let components = UserDefaults.standard.array(forKey: colorKey(provider.id)) as? [Double],
+              components.count == 3,
+              components.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
+            return defaultMenuBarColor(for: provider.id)
+        }
+        return NSColor(srgbRed: CGFloat(components[0]), green: CGFloat(components[1]),
+                       blue: CGFloat(components[2]), alpha: 1)
+    }
+
+    static func setMenuBarColor(_ color: NSColor, for provider: any QuotaProvider) {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return }
+        let components = [Double(rgb.redComponent), Double(rgb.greenComponent), Double(rgb.blueComponent)]
+        guard components.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { return }
+        UserDefaults.standard.set(components, forKey: colorKey(provider.id))
+    }
 
     static func isVisibleInMenuBar(_ id: String) -> Bool {
         !UserDefaults.standard.bool(forKey: key(id))

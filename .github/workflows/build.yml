@@ -21,6 +21,13 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" macOS/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" macOS/Info.plist
 
+      - name: Test gauge rendering
+        run: |
+          cd macOS
+          mkdir -p .build
+          swiftc Sources/Gauge.swift Sources/Usage.swift Sources/OAuth.swift Tests/GaugeTests.swift -o .build/gauge-tests
+          .build/gauge-tests
+
       - name: Build .dmg
         run: ./macOS/build-dmg.sh
 

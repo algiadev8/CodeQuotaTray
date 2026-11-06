@@ -115,6 +115,7 @@ final class ProviderRowView: CardView {
     private let loginButton = NSButton(title: "", target: nil, action: nil)
     private let logoutButton = NSButton(title: "ログアウト", target: nil, action: nil)
     private let visibleCheck = NSButton(checkboxWithTitle: "メニューバーに表示", target: nil, action: nil)
+    private let colorWell = NSColorWell()
 
     init(provider: any QuotaProvider, host: SettingsHost) {
         self.provider = provider
@@ -136,7 +137,12 @@ final class ProviderRowView: CardView {
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        let stack = NSStackView(views: [header, statusLabel, summaryLabel, buttons])
+        let colorLabel = NSTextField(labelWithString: "メニューバーの色")
+        let colorRow = NSStackView(views: [colorLabel, colorWell])
+        colorRow.orientation = .horizontal
+        colorRow.spacing = 8
+
+        let stack = NSStackView(views: [header, statusLabel, summaryLabel, colorRow, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 6
@@ -148,6 +154,8 @@ final class ProviderRowView: CardView {
         logoutButton.action = #selector(logoutClicked)
         visibleCheck.target = self
         visibleCheck.action = #selector(visibilityClicked)
+        colorWell.target = self
+        colorWell.action = #selector(colorChanged)
         reload()
     }
 
@@ -157,6 +165,12 @@ final class ProviderRowView: CardView {
     @objc private func logoutClicked() { host?.settingsLogout(provider) }
     @objc private func visibilityClicked() {
         Preferences.setVisibleInMenuBar(provider.id, visibleCheck.state == .on)
+        host?.settingsVisibilityChanged()
+    }
+
+    @objc private func colorChanged() {
+        Preferences.setMenuBarColor(colorWell.color, for: provider)
+        colorWell.color = Preferences.menuBarColor(for: provider)
         host?.settingsVisibilityChanged()
     }
 
@@ -196,6 +210,7 @@ final class ProviderRowView: CardView {
         summaryLabel.stringValue = status.summary
         summaryLabel.isHidden = status.summary.isEmpty
         visibleCheck.state = Preferences.isVisibleInMenuBar(provider.id) ? .on : .off
+        colorWell.color = Preferences.menuBarColor(for: provider)
     }
 }
 
@@ -203,7 +218,12 @@ final class ProviderRowView: CardView {
 final class SettingsWindowController: NSWindowController {
     private let rows: [ProviderRowView]
     private let updateRow: UpdateRowView
+    private let documentView = NSView()
+    private var documentHeightConstraint: NSLayoutConstraint!
+    private let stack = NSStackView()
+    private let scrollView = NSScrollView()
     private static let width: CGFloat = 520
+    private static let inset: CGFloat = 20
 
     init(host: SettingsHost) {
         rows = host.providers.map { ProviderRowView(provider: $0, host: host) }
@@ -216,24 +236,30 @@ final class SettingsWindowController: NSWindowController {
 
         let heading = NSTextField(labelWithString: "プロバイダ")
         heading.font = .boldSystemFont(ofSize: 15)
-        let stack = NSStackView(views: [heading] + rows + [updateRow])
+        ([heading] + rows + [updateRow]).forEach { stack.addArrangedSubview($0) }
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
-        let inset: CGFloat = 20
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(stack)
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = documentView
+        window.contentView = scrollView
+
+        let inset = Self.inset
+        documentHeightConstraint = documentView.heightAnchor.constraint(equalToConstant: 1)
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: Self.width),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: inset),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -inset),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset)
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            stack.topAnchor.constraint(equalTo: documentView.topAnchor, constant: inset),
+            stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -inset),
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: inset),
+            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -inset)
         ] + (rows + [updateRow]).map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) })
-        window.contentView = container
+
         resizeToFit()
         window.center()
     }
@@ -255,14 +281,23 @@ final class SettingsWindowController: NSWindowController {
         resizeToFit()
     }
 
-    /// 内容の高さに合わせてウィンドウを調整（上端は固定）。
+    /// 内容に合わせて画面内でウィンドウを調整し、収まらない分はスクロールする。
     private func resizeToFit() {
-        guard let window, let content = window.contentView else { return }
-        content.layoutSubtreeIfNeeded()
-        let target = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: Self.width, height: content.fittingSize.height))
+        guard let window else { return }
+        // Measure the document without its previous height forcing the stack to stretch.
+        documentHeightConstraint.isActive = false
+        let documentHeight = documentView.fittingSize.height
+        documentHeightConstraint.constant = documentHeight
+        documentHeightConstraint.isActive = true
+        let target = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: Self.width, height: documentHeight))
+        let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame
         var frame = window.frame
-        frame.origin.y += frame.height - target.height
-        frame.size = target.size
+        frame.size = NSSize(width: target.width, height: min(target.height, visibleFrame?.height ?? target.height))
+        frame.origin.y += window.frame.height - frame.height
+        if let visibleFrame {
+            frame.origin.y = min(max(frame.origin.y, visibleFrame.minY), visibleFrame.maxY - frame.height)
+        }
         window.setFrame(frame, display: true)
+        scrollView.layoutSubtreeIfNeeded()
     }
 }

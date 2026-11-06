@@ -1,6 +1,6 @@
 import AppKit
 
-// 残量ゲージ（緑のバー）の描画。5時間枠と週次枠の2本を上下に並べる。
+// 残量ゲージ（緑のバー）の描画。
 enum Gauge {
     static let green = NSColor(srgbRed: 0.18, green: 0.78, blue: 0.44, alpha: 1)
     static let low = NSColor(srgbRed: 0.87, green: 0.28, blue: 0.28, alpha: 1)
@@ -22,38 +22,61 @@ enum Gauge {
         NSBezierPath(roundedRect: fill, xRadius: radius, yRadius: radius).fill()
     }
 
-    /// メニューバー用：プロバイダごとに「ラベル + 最大2本のバー（上から順）」を横に並べる。
-    static func statusImage(groups: [(name: String, values: [Double?])]) -> NSImage {
+    /// 色はプロバイダの識別用。1列に4段まで並べ、以降は右に折り返す。
+    /// 各段の左が5時間枠、右が週次枠。低残量はバーの右端の点で示す。
+    static func statusImage(groups: [(color: NSColor, values: [Double?])]) -> NSImage {
         let height: CGFloat = 18
-        let barWidth: CGFloat = 30
-        let barHeight: CGFloat = 5
+        let maxRows = 4
+        let rows = max(1, min(groups.count, maxRows))
+        // 段数が少ないほどバーを太く・長くする（2段: 太さ5.5 / 幅26、4段: 太さ3 / 幅16）。
+        let pitch = min(height / CGFloat(rows), 9)
+        let barHeight = (pitch * 0.62).rounded(.up)
+        let barWidth: CGFloat = rows <= 2 ? 26 : (rows == 3 ? 20 : 16)
         let barGap: CGFloat = 3
-        let groupGap: CGFloat = 9
-        let labelGap: CGFloat = 3
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9, weight: .semibold),
-            .foregroundColor: NSColor.labelColor
-        ]
-        let labels = groups.map { NSAttributedString(string: $0.name, attributes: attributes) }
-        let labelWidths = labels.map { ceil($0.size().width) }
-        let total = zip(labelWidths, groups).reduce(CGFloat(0)) { $0 + $1.0 + labelGap + barWidth }
-            + groupGap * CGFloat(max(0, groups.count - 1))
-        return NSImage(size: NSSize(width: max(total, 1), height: height), flipped: false) { _ in
-            var x: CGFloat = 0
+        let columnGap: CGFloat = 5
+        let groupWidth = barWidth * 2 + barGap
+        let columns = max(1, (groups.count + maxRows - 1) / maxRows)
+        let width = CGFloat(columns) * groupWidth + CGFloat(columns - 1) * columnGap
+        let topInset = (height - pitch * CGFloat(rows)) / 2
+        return NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
             for (index, group) in groups.enumerated() {
-                let label = labels[index]
-                label.draw(at: NSPoint(x: x, y: (height - label.size().height) / 2))
-                let barX = x + labelWidths[index] + labelGap
-                let values = Array(group.values.prefix(2))
-                if values.count >= 2 {
-                    drawBar(in: NSRect(x: barX, y: height / 2 + barGap / 2, width: barWidth, height: barHeight), remaining: values[0])
-                    drawBar(in: NSRect(x: barX, y: height / 2 - barGap / 2 - barHeight, width: barWidth, height: barHeight), remaining: values[1])
-                } else {
-                    drawBar(in: NSRect(x: barX, y: (height - barHeight) / 2, width: barWidth, height: barHeight), remaining: values.first ?? nil)
+                let column = index / maxRows
+                let row = index % maxRows
+                let x = CGFloat(column) * (groupWidth + columnGap)
+                let y = height - topInset - CGFloat(row + 1) * pitch + (pitch - barHeight) / 2
+                for (windowIndex, value) in group.values.prefix(2).enumerated() {
+                    let rect = NSRect(x: x + CGFloat(windowIndex) * (barWidth + barGap),
+                                      y: y, width: barWidth, height: barHeight)
+                    drawStatusBar(in: rect, remaining: value, color: group.color)
                 }
-                x += labelWidths[index] + labelGap + barWidth + groupGap
             }
             return true
+        }
+    }
+
+    /// 未取得は点線、残量0は空のトラック。20%以下は右端に目印を付ける。
+    private static func drawStatusBar(in rect: NSRect, remaining: Double?, color: NSColor) {
+        let radius = rect.height / 2
+        NSColor.labelColor.withAlphaComponent(0.25).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+        guard let remaining, remaining.isFinite else {
+            color.withAlphaComponent(0.65).setFill()
+            for offset in stride(from: CGFloat(0), to: rect.width, by: 4) {
+                NSBezierPath(ovalIn: NSRect(x: rect.minX + offset, y: rect.midY - 0.5, width: 1, height: 1)).fill()
+            }
+            return
+        }
+        let ratio = CGFloat(max(0, min(100, remaining)) / 100)
+        if ratio > 0 {
+            let fill = NSRect(x: rect.minX, y: rect.minY, width: max(rect.height, rect.width * ratio), height: rect.height)
+            color.setFill()
+            NSBezierPath(roundedRect: fill, xRadius: radius, yRadius: radius).fill()
+        }
+        if remaining <= 20 {
+            NSColor.black.setFill()
+            NSBezierPath(ovalIn: NSRect(x: rect.maxX - 3, y: rect.midY - 1.5, width: 3, height: 3)).fill()
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: NSRect(x: rect.maxX - 2.25, y: rect.midY - 0.75, width: 1.5, height: 1.5)).fill()
         }
     }
 }

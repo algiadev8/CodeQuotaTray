@@ -195,14 +195,14 @@ final class TrayApp: NSObject, NSApplicationDelegate, SettingsHost, SPUUpdaterDe
             // 全て非表示でもメニューに到達できるよう、汎用アイコンを出す。
             statusItem.button?.image = NSImage(systemSymbolName: "chart.bar.fill", accessibilityDescription: "CodeQuota Tray")
         } else {
-            let groups = visible.map { provider -> (name: String, values: [Double?]) in
+            let groups = visible.map { provider -> (color: NSColor, values: [Double?]) in
                 var snapshot: UsageSnapshot?
                 if case let .success(value)? = results[provider.id] { snapshot = value }
-                return (provider.shortName, provider.barWindowIDs.map { snapshot?.window($0)?.remaining })
+                return (Preferences.menuBarColor(for: provider), provider.barWindowIDs.map { snapshot?.window($0)?.remaining })
             }
             statusItem.button?.image = Gauge.statusImage(groups: groups)
         }
-        statusItem.button?.toolTip = providers.map { provider -> String in
+        let description = providers.map { provider -> String in
             switch results[provider.id] {
             case .success(let snapshot)?:
                 let parts = snapshot.windows.map { "\($0.label) \($0.percentage)" }.joined(separator: " / ")
@@ -213,6 +213,8 @@ final class TrayApp: NSObject, NSApplicationDelegate, SettingsHost, SPUUpdaterDe
                 return provider.displayName
             }
         }.joined(separator: "\n")
+        statusItem.button?.toolTip = description
+        statusItem.button?.setAccessibilityLabel("CodeQuota Tray。" + description)
     }
 }
 
